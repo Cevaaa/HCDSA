@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deep-research-agent"
+version = "0.1.0"
+description = "Deep Research Agent example with MCP (Tavily) and Agentscope"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Your Name" }]
+dependencies = [
+  "agentscope>=0.4.0",
+  "pydantic>=2.3",
+  "shortuuid>=1.0",
+]
+
+[project.scripts]
+deep-research-demo = "deep_research_agent.runners.main:cli_entry"
+
+[tool.setuptools.package-data]
+"deep_research_agent.agent.prompt.built_in_prompt" = ["*.md"]
+"deep_research_agent.logging" = ["logging.yaml"]

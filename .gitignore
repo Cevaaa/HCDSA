@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.dist/
+build/
+.env
+.deep_research_agent/
+.deep_research_agent_logs/
+deepresearch_agent_demo_env/
