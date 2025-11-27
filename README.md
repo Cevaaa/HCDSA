@@ -25,7 +25,14 @@ pip install agentscope
 uv pip install agentscope
 ```
 
-2) 安装该项目的环境依赖，在该项目的目录下运行。（暂时无需这一步）
+2) 为了启动MCP服务需要安装npm。
+
+```bash
+apt-get install npm
+
+```
+
+3) 安装该项目的环境依赖，在该项目的目录下运行。（暂时无需这一步）
 ```bash
 # Make sure the running path is HCDSA/
    pip install -e .
