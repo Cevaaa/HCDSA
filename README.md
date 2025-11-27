@@ -29,7 +29,9 @@ uv pip install agentscope
 
 ```bash
 apt-get install npm
-
+# 确保以下指令能够正常运行
+npx -y tavily-mcp@latest
+# Tavily MCP server running on stdio
 ```
 
 3) 安装该项目的环境依赖，在该项目的目录下运行。（暂时无需这一步）
