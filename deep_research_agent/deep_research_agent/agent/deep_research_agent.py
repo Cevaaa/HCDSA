@@ -439,6 +439,12 @@ class DeepResearchAgent(ReActAgent):
                     format_template=SubtasksDecomposition,
                     stream=self.model.stream,
                 )
+                print(f"\n{'='*20} Subtask Decomposition {'='*20}")
+                print(f"Current Objective: {self.current_subtask[-1].objective}")
+                print(f"Working Plan: {gaps_and_plan.get('working_plan')}")
+                print(f"Knowledge Gaps: {gaps_and_plan.get('knowledge_gaps')}")
+                print(f"{'='*63}\n")
+
                 response = json.dumps(
                     gaps_and_plan,
                     indent=2,

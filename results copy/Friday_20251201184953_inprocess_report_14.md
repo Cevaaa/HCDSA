@@ -1,0 +1,13 @@
+### Eliud Kipchoge's Record-Making Marathon Pace and the Distance to the Moon
+
+- Eliud Kipchoge's record-making marathon pace was set during the 2022 Berlin Marathon, where he finished the race in 2:01:09. This translates to an average speed of 21.02 km/h or 2 minutes 52 seconds per kilometer. His performance was a significant improvement over his previous world record of 2:01:39, set on the same course in 2018. During the 2022 Berlin Marathon, Kipchoge maintained a consistent pace, with his average pace per 5km clocked at 14:21.4. Even though his pace slowed slightly between kilometers 35 and 40, he managed to increase his speed over the final 2.195km, posting an average time of 2:52 per kilometer, just two seconds slower than his fastest average kilometer times in the race. [Citation](https://www.olympics.com/en/news/how-fast-was-eliud-kipchoge-world-record)
+
+- The minimum perigee value (closest approach) of the Moon to Earth is approximately 363,104 kilometers. This value is derived from the Wikipedia page for the Moon, which provides detailed information about the lunar orbit and its closest and farthest distances from Earth. The perigee is the point in the Moon's orbit where it is nearest to Earth, and this distance is crucial for various astronomical and space-related calculations. [Citation](https://en.wikipedia.org/wiki/Moon#Orbit_and_rotation)
+
+- To calculate the time it would take for Eliud Kipchoge to run the distance between the Earth and the Moon at his record-making marathon pace, we need to use the following formula: Time = Distance / Speed. The distance is 363,104 kilometers, and the speed is 21.02 km/h. Therefore, the time required is 363,104 km / 21.02 km/h = 17,273.4 hours. Rounding this to the nearest 1000 hours, it would take Kipchoge approximately 17,000 hours to run the distance between the Earth and the Moon at his record-making marathon pace. [Citation](https://www.olympics.com/en/news/how-fast-was-eliud-kipchoge-world-record)
+
+**Work Log:**
+- **Knowledge Gap Filled:** Eliud Kipchoge's record-making marathon pace (in km/h) and the minimum perigee value (closest approach) of the Moon to Earth (in km).
+- **Tools Used:**
+  - **tavily-search** with input parameters to find Kipchoge's exact world record marathon pace and the minimum perigee value of the Moon.
+  - **Calculation** to determine the time it would take for Kipchoge to run the distance between the Earth and the Moon at his record-making marathon pace.
