@@ -4,6 +4,8 @@
 import os
 import json
 import asyncio
+import random
+import time
 
 from typing import Type, Optional, Any, Tuple
 from datetime import datetime
@@ -16,6 +18,7 @@ from deep_research_agent.agent.prompt.promptmodule import (
     WebExtraction,
     FollowupJudge,
     ReflectFailure,
+    SemanticPlan,
 )
 from deep_research_agent.core.utils import (
     truncate_search_result,
@@ -70,8 +73,10 @@ class DeepResearchAgent(ReActAgent):
         max_iters: int = 30,
         max_depth: int = 3,
         tmp_file_storage_dir: str = "tmp",
+        enable_parallel: bool = True,
     ) -> None:
         """Initialize the Deep Research Agent."""
+        self.enable_parallel = enable_parallel
         # initialization of prompts
         self.prompt_dict = load_prompt_dict()
 
@@ -136,6 +141,11 @@ class DeepResearchAgent(ReActAgent):
 
         # Identify the expected output and generate a plan
         await self.decompose_and_expand_subtask()
+        # Experimental: analyze semantic dependency structure for potential parallel subtasks
+        try:
+            await self._analyze_semantic_parallel_plan()
+        except Exception as exc:  # pragma: no cover - debug helper
+            logger.warning("Semantic parallel analysis failed: %s", exc)
         msg.content += (
             f"\nExpected Output:\n{self.current_subtask[0].knowledge_gaps}"
         )
@@ -190,27 +200,219 @@ class DeepResearchAgent(ReActAgent):
             self.memory = backup_memory
 
             # Calling the tools
-            for tool_call in msg_reasoning.get_content_blocks("tool_use"):
-                self.intermediate_memory.append(
-                    Msg(
-                        self.name,
-                        content=[tool_call],
-                        role="assistant",
-                    ),
-                )  # add tool_use memory
-                msg_response = await self._acting(tool_call)
-                if msg_response:
-                    await self.memory.add(msg_response)
-                    self.current_subtask = []
-                    return msg_response
+            tool_calls = msg_reasoning.get_content_blocks("tool_use")
+            if len(tool_calls) > 0:
+                # 1. Log intention for all tool calls first
+                for tool_call in tool_calls:
+                    self.intermediate_memory.append(
+                        Msg(
+                            self.name,
+                            content=[tool_call],
+                            role="assistant",
+                        ),
+                    )
+                
+                results = []
+                if self.enable_parallel:
+                    # 2a. Execute tool calls in parallel
+                    logger.info(f"--- Executing {len(tool_calls)} tool calls in PARALLEL ---")
+                    tasks = [self._acting(tool_call) for tool_call in tool_calls]
+                    results = await asyncio.gather(*tasks)
+                else:
+                    # 2b. Execute tool calls serially
+                    logger.info(f"--- Executing {len(tool_calls)} tool calls SERIALLY ---")
+                    for tool_call in tool_calls:
+                        res = await self._acting(tool_call)
+                        results.append(res)
+                        # In serial mode, if one action returns a finish signal, we might stop early,
+                        # but to keep comparison fair with parallel (which runs all), we act all or logic might need adjustment.
+                        # For DeepResearch, usually subtasks are independent searches, so running all is fine.
+                        if res: 
+                            # If a tool returns a Msg (like finish), we return immediately in serial mode
+                            # matching original behavior
+                            await self.memory.add(res)
+                            self.current_subtask = []
+                            return res
+
+                # 3. Process results (mostly for Parallel mode, or Serial if no early return happened)
+                for msg_response in results:
+                    if msg_response:
+                        await self.memory.add(msg_response)
+                        self.current_subtask = []
+                        return msg_response
 
         # When the maximum iterations are reached, summarize all the findings
         return await self._summarizing()
+
+    async def _analyze_semantic_parallel_plan(self) -> None:
+        """Experimental: ask the model to output a semantic dependency DAG of subtasks.
+
+        This does NOT affect core logic; it only prints and (optionally) executes
+        a suggested parallelization structure based on the current working plan /
+        knowledge gaps.
+        """
+        if not self.current_subtask:
+            return
+        cur = self.current_subtask[-1]
+        if not cur.working_plan:
+            return
+
+        sys_prompt = (
+            "You are an expert task planner. Given a deep research working plan "
+            "and knowledge gaps, you must rewrite them as a set of ATOMIC subtasks "
+            "with explicit dependencies, suitable for parallel execution scheduling. "
+            "Subtasks that have no dependencies and only require external web "
+            "search can be executed fully in parallel."
+        )
+        user_inst = (
+            "## Working Plan\n"
+            f"{cur.working_plan}\n\n"
+            "## Knowledge Gaps\n"
+            f"{cur.knowledge_gaps}\n\n"
+            "Now: break this into atomic subtasks and fill the SemanticPlan "
+            "schema. Make sure ids are 1..N and dependencies form a DAG."
+        )
+
+        result = await self.get_model_output(
+            msgs=[
+                Msg("system", sys_prompt, "system"),
+                Msg("user", user_inst, "user"),
+            ],
+            format_template=SemanticPlan,
+            stream=self.model.stream,
+        )
+
+        subtasks = result.get("subtasks", []) if isinstance(result, dict) else []
+        if not subtasks:
+            logger.info("No semantic subtasks returned for parallel analysis.")
+            return
+
+        print("\n==================== Semantic Parallel Plan (Experimental) ====================")
+        for node in subtasks:
+            node_id = node.get("id")
+            desc = node.get("description")
+            deps = node.get("depends_on", [])
+            print(f"- Subtask #{node_id}: {desc}")
+            print(f"  depends_on: {deps}")
+        print("===============================================================================\n")
+
+        # Experimental: actually execute the first few layers of independent subtasks
+        try:
+            await self._execute_semantic_plan(result)
+        except Exception as exc:  # pragma: no cover - debug helper
+            logger.warning("Semantic parallel execution failed: %s", exc)
+
+    async def _execute_semantic_plan(self, plan: dict) -> None:
+        """Experimental: execute SemanticPlan layer by layer using parallel Tavily search.
+
+        This function is side-channel only: it does NOT touch self.memory /
+        self.current_subtask to avoid interfering with the main ReAct loop.
+        It is intended to empirically measure/observe layered parallelism.
+        """
+        nodes = plan.get("subtasks", []) if isinstance(plan, dict) else []
+        if not nodes:
+            return
+
+        id_to_node: dict[int, dict] = {}
+        for node in nodes:
+            try:
+                nid = int(node.get("id"))
+            except Exception:  # pragma: no cover
+                continue
+            id_to_node[nid] = node
+
+        completed: set[int] = set()
+        layer_idx = 1
+
+        while len(completed) < len(id_to_node):
+            ready: list[dict] = []
+            for nid, node in id_to_node.items():
+                if nid in completed:
+                    continue
+                deps = node.get("depends_on", []) or []
+                if all(int(d) in completed for d in deps):
+                    ready.append(node)
+
+            if not ready:
+                break  # cyclic or malformed plan
+
+            # 只执行前几层的纯“检索型”子任务，避免无限扩展
+            if layer_idx > 3:
+                logger.info(
+                    "Semantic plan execution: stop after %d layers to avoid over-search.",
+                    layer_idx - 1,
+                )
+                break
+
+            print(f"\n[Semantic Execution] Layer {layer_idx} - {len(ready)} subtasks (parallel)")
+            queries: list[tuple[int, str]] = []
+            for node in ready:
+                nid = int(node.get("id"))
+                desc = node.get("description", "")
+                if not desc:
+                    continue
+                # 简单做法：直接用描述作为 Tavily 的查询
+                queries.append((nid, desc))
+                print(f"  - #{nid}: {desc}")
+
+            if not queries:
+                break
+
+            async def _run_one(nid: int, desc: str) -> tuple[int, float]:
+                """Run one semantic subtask search and measure its own latency."""
+                params = {
+                    "query": desc,
+                    "max_results": 3,
+                    "topic": "general",
+                }
+                t0 = time.perf_counter()
+                try:
+                    await self.call_specific_tool(self.search_function, params)
+                except Exception as exc:  # pragma: no cover - debug helper
+                    logger.warning("Semantic subtask #%d failed: %s", nid, exc)
+                t1 = time.perf_counter()
+                return nid, t1 - t0
+
+            # 并行执行本层所有子任务，同时记录每个子任务自身耗时
+            layer_start = time.perf_counter()
+            tasks = [_run_one(nid, desc) for nid, desc in queries]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            layer_end = time.perf_counter()
+
+            per_task_times: list[float] = []
+            for res in results:
+                if isinstance(res, tuple) and len(res) == 2:
+                    _, dt = res
+                    per_task_times.append(dt)
+
+            parallel_time = layer_end - layer_start
+            serial_estimate = sum(per_task_times) if per_task_times else 0.0
+
+            print(
+                f"[Semantic Execution] Layer {layer_idx} parallel time : "
+                f"{parallel_time:.2f} s"
+            )
+            if serial_estimate > 0:
+                print(
+                    f"[Semantic Execution] Layer {layer_idx} serial estimate: "
+                    f"{serial_estimate:.2f} s "
+                    f"(speedup ~ {serial_estimate / max(parallel_time, 1e-6):.2f}x)"
+                )
+
+            # 标记本层节点为完成（即使部分失败，我们这里只关心结构）
+            for node in ready:
+                completed.add(int(node.get("id")))
+
+            layer_idx += 1
 
     async def _acting(self, tool_call: ToolUseBlock) -> Msg | None:
         """
         Execute a tool call and process its response.
         """
+        # Add small random jitter for parallel execution to avoid rate limits
+        if getattr(self, "enable_parallel", False):
+            await asyncio.sleep(random.uniform(0.5, 2.0))
+
         tool_res_msg = Msg(
             "system",
             [
@@ -243,7 +445,15 @@ class DeepResearchAgent(ReActAgent):
                     or tool_call["name"] == self.finish_function_name
                     and not chunk.metadata.get("success")
                 ):
-                    await self.print(tool_res_msg, chunk.is_last)
+                    # For display only: truncate output to avoid flooding the console
+                    display_msg = deepcopy(tool_res_msg)
+                    raw_output = display_msg.content[0]["output"]
+                    if isinstance(raw_output, list) and len(raw_output) > 0:
+                         text = raw_output[0].get("text", "")
+                         if len(text) > 100: # if longer than ~20 words approx
+                             display_msg.content[0]["output"][0]["text"] = text[:100] + "... (truncated for display)"
+                    
+                    await self.print(display_msg, chunk.is_last)
 
                 # Return message if generate_response is called successfully
                 if tool_call[
@@ -688,7 +898,11 @@ class DeepResearchAgent(ReActAgent):
             ],
             stream=self.model.stream,
         )
-        intermediate_report = blocks[0]["text"]  # type: ignore[index]
+        if blocks and len(blocks) > 0:
+            intermediate_report = blocks[0]["text"]  # type: ignore[index]
+        else:
+            logger.warning("Model returned empty blocks in summarize_intermediate_results")
+            intermediate_report = "Failed to generate summary due to empty model response."
 
         # Write the intermediate report
         intermediate_report_path = os.path.join(
@@ -802,7 +1016,11 @@ class DeepResearchAgent(ReActAgent):
             msgs=msgs,
             stream=self.model.stream,
         )
-        final_report_content = blocks[0]["text"]  # type: ignore[index]
+        if blocks and len(blocks) > 0:
+            final_report_content = blocks[0]["text"]  # type: ignore[index]
+        else:
+            logger.warning("Model returned empty blocks in _generate_deepresearch_report")
+            final_report_content = "Failed to generate final report due to empty model response."
         logger.info(
             "The final Report is generated: %s",
             final_report_content,

@@ -14,4 +14,5 @@ QUERY="${1:-$DEFAULT_QUERY}"
 # ==========================================
 
 # 运行
-python -m deep_research_agent.runners.main --query "${QUERY}"
+python -m deep_research_agent.runners.main --query "Find the 2023 GDP growth rate and inflation rate for China, USA, and Germany. Summarize briefly."
+# python scrips/benchmark_parallel.py

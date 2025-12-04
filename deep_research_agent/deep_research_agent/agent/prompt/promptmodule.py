@@ -138,3 +138,42 @@ class ReflectFailure(BaseModel):
             },
         },
     )
+
+
+class SemanticSubtask(BaseModel):
+    """A single semantic subtask node with explicit dependencies."""
+
+    id: int = Field(
+        description=(
+            "A short integer id for this subtask, starting from 1 "
+            "and unique within the current task."
+        ),
+    )
+    description: str = Field(
+        description=(
+            "One atomic subtask description, concise but self-contained, "
+            "e.g. 'Retrieve 2023 GDP growth rate for China from official "
+            "or reputable economic data sources.'"
+        ),
+    )
+    depends_on: list[int] = Field(
+        default_factory=list,
+        description=(
+            "A list of ids of subtasks that must be completed BEFORE this "
+            "subtask can start. Use an empty list [] if this subtask has "
+            "no prerequisites and can be executed in parallel with other "
+            "independent subtasks."
+        ),
+    )
+
+
+class SemanticPlan(BaseModel):
+    """Structured semantic dependency plan for parallelism analysis."""
+
+    subtasks: list[SemanticSubtask] = Field(
+        description=(
+            "A list of atomic semantic subtasks and their dependencies, "
+            "forming a DAG. Subtasks that share the same set of depends_on "
+            "can be executed in parallel."
+        ),
+    )
