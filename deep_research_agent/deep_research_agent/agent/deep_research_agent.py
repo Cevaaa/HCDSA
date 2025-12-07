@@ -75,9 +75,11 @@ class DeepResearchAgent(ReActAgent):
         max_depth: int = 3,
         tmp_file_storage_dir: str = "tmp",
         enable_parallel: bool = True,
+        enable_search_cache: bool = True,
     ) -> None:
         """Initialize the Deep Research Agent."""
         self.enable_parallel = enable_parallel
+        self.enable_search_cache = enable_search_cache
         # initialization of prompts
         self.prompt_dict = load_prompt_dict()
 
@@ -147,9 +149,10 @@ class DeepResearchAgent(ReActAgent):
             await self._analyze_semantic_parallel_plan()
         except Exception as exc:  # pragma: no cover - debug helper
             logger.warning("Semantic parallel analysis failed: %s", exc)
-        msg.content += (
-            f"\nExpected Output:\n{self.current_subtask[0].knowledge_gaps}"
-        )
+            # 追加预期输出信息，注意 current_subtask 可能在异常路径中被清空
+            root_subtask = self.current_subtask[0] if self.current_subtask else None
+            expected = root_subtask.knowledge_gaps if root_subtask else ""
+            msg.content += f"\nExpected Output:\n{expected}"
 
         # Add user query message to memory
         await self.memory.add(msg)  # type: ignore
@@ -435,7 +438,7 @@ class DeepResearchAgent(ReActAgent):
 
         try:
             tool_name = tool_call["name"]
-            use_cache = tool_name in [
+            use_cache = self.enable_search_cache and tool_name in [
                 getattr(self, "search_function", ""),
                 getattr(self, "extract_function", ""),
             ]
@@ -514,20 +517,34 @@ class DeepResearchAgent(ReActAgent):
                     chunk = chunks_from_cache[-1]
                 search_results = chunk.content if chunk else []
                 extract_res = await self._follow_up(search_results, tool_call)
-                if isinstance(
-                    extract_res.metadata,
-                    dict,
-                ) and extract_res.metadata.get("update_memory"):
+                if isinstance(extract_res.metadata, dict) and extract_res.metadata.get(
+                    "update_memory",
+                ):
                     self.intermediate_memory = []
+
+                    # 安全地从 intermediate_report 中取文本，避免空列表越界
+                    interm = extract_res.metadata.get("intermediate_report")
+                    interm_text = ""
+                    if hasattr(interm, "content") and isinstance(
+                        getattr(interm, "content"),
+                        list,
+                    ):
+                        content_list = getattr(interm, "content")
+                        if content_list:
+                            first = content_list[0]
+                            if isinstance(first, dict):
+                                interm_text = first.get("text", "") or ""
+                    if not interm_text:
+                        # 退化为字符串形式，避免抛错
+                        interm_text = str(getattr(interm, "content", interm))
+
                     await self.memory.add(
                         Msg(
                             "assistant",
                             content=[
                                 TextBlock(
                                     type="text",
-                                    text=extract_res.metadata.get(
-                                        "intermediate_report",
-                                    ).content[0]["text"],
+                                    text=interm_text,
                                 ),
                             ],
                             role="assistant",
@@ -537,13 +554,26 @@ class DeepResearchAgent(ReActAgent):
             # Update memory with the intermediate report
             if update_memory and intermediate_report:
                 self.intermediate_memory = []
+                # 同样防止 intermediate_report.content 为空
+                interm_text = ""
+                if hasattr(intermediate_report, "content") and isinstance(
+                    intermediate_report.content,
+                    list,
+                ):
+                    if intermediate_report.content:
+                        first = intermediate_report.content[0]
+                        if isinstance(first, dict):
+                            interm_text = first.get("text", "") or ""
+                if not interm_text:
+                    interm_text = str(getattr(intermediate_report, "content", intermediate_report))
+
                 await self.memory.add(
                     Msg(
                         "assistant",
                         content=[
                             TextBlock(
                                 type="text",
-                                text=intermediate_report.content[0]["text"],
+                                text=interm_text,
                             ),
                         ],
                         role="assistant",
@@ -581,13 +611,23 @@ class DeepResearchAgent(ReActAgent):
         # Summarize intermediate results into a draft report
         if tool_call["name"] == self.summarize_function:
             self.intermediate_memory = []
+
+            # 安全提取 chunk 内文本，避免 content 为空导致越界
+            text = ""
+            if isinstance(chunk.content, list) and chunk.content:
+                first = chunk.content[0]
+                if isinstance(first, dict):
+                    text = first.get("text", "") or ""
+            if not text:
+                text = str(getattr(chunk, "content", chunk))
+
             await self.memory.add(
                 Msg(
                     "assistant",
                     [
                         TextBlock(
                             type="text",
-                            text=chunk.content[0]["text"],
+                            text=text,
                         ),
                     ],
                     "assistant",
@@ -674,7 +714,7 @@ class DeepResearchAgent(ReActAgent):
             "system",
         )
         # 对 Tavily 搜索 / 抽取在此路径也应用缓存（例如 _follow_up 中的 extract）
-        use_cache = func_name in [
+        use_cache = self.enable_search_cache and func_name in [
             getattr(self, "search_function", ""),
             getattr(self, "extract_function", ""),
         ]
@@ -942,9 +982,13 @@ class DeepResearchAgent(ReActAgent):
                 ],
                 stream=self.model.stream,
             )
-            self.current_subtask[-1].working_plan = blocks[0][
-                "text"
-            ]  # type: ignore[index]
+            # 防御性更新 working_plan，避免 blocks 为空或结构异常
+            if isinstance(blocks, list) and blocks:
+                first = blocks[0]
+                if isinstance(first, dict):
+                    new_plan = first.get("text")
+                    if isinstance(new_plan, str) and new_plan.strip():
+                        self.current_subtask[-1].working_plan = new_plan
         report_prefix = "#" * len(self.current_subtask)
         summarize_sys_prompt = self.prompt_dict[
             "summarize_sys_prompt"
@@ -966,11 +1010,12 @@ class DeepResearchAgent(ReActAgent):
                     type(item.content),
                 )
                 continue
+        root_subtask = self.current_subtask[0] if self.current_subtask else None
         summarize_instruction = self.prompt_dict["summarize_inst"].format_map(
             {
-                "objective": self.current_subtask[0].objective,
-                "knowledge_gaps": self.current_subtask[0].knowledge_gaps,
-                "working_plan": self.current_subtask[-1].working_plan,
+                "objective": getattr(root_subtask, "objective", "") if root_subtask else "",
+                "knowledge_gaps": getattr(root_subtask, "knowledge_gaps", "") if root_subtask else "",
+                "working_plan": self.current_subtask[-1].working_plan if self.current_subtask else "",
                 "tool_result": tool_result,
             },
         )
@@ -1070,10 +1115,23 @@ class DeepResearchAgent(ReActAgent):
                     func_name=self.read_file_function,
                     params=params,
                 )
-                inprocess_report += (
-                    read_draft_tool_res_msg.content[0]["output"][0]["text"]
-                    + "\n"
-                )
+                # 防御性读取文件内容，避免 output 或列表为空
+                draft_text = ""
+                content_list = read_draft_tool_res_msg.content
+                if isinstance(content_list, list) and content_list:
+                    first_block = content_list[0]
+                    if isinstance(first_block, dict):
+                        output = first_block.get("output")
+                        if isinstance(output, list) and output:
+                            first_out = output[0]
+                            if isinstance(first_out, dict):
+                                draft_text = first_out.get("text", "") or ""
+                        elif isinstance(output, str):
+                            draft_text = output
+                if not draft_text:
+                    draft_text = str(read_draft_tool_res_msg.content)
+
+                inprocess_report += draft_text + "\n"
 
             msgs = [
                 Msg(
@@ -1100,8 +1158,12 @@ class DeepResearchAgent(ReActAgent):
             msgs=msgs,
             stream=self.model.stream,
         )
-        if blocks and len(blocks) > 0:
-            final_report_content = blocks[0]["text"]  # type: ignore[index]
+        if isinstance(blocks, list) and blocks:
+            first = blocks[0]
+            if isinstance(first, dict):
+                final_report_content = first.get("text") or ""
+            else:
+                final_report_content = str(first)
         else:
             logger.warning("Model returned empty blocks in _generate_deepresearch_report")
             final_report_content = "Failed to generate final report due to empty model response."
@@ -1129,17 +1191,37 @@ class DeepResearchAgent(ReActAgent):
 
     async def _summarizing(self) -> Msg:
         """Generate a report based on the existing findings when max iters hit."""
+        checklist_text = (
+            self.current_subtask[0].knowledge_gaps
+            if self.current_subtask
+            else ""
+        )
         (
             summarized_content,
             _,
         ) = await self._generate_deepresearch_report(
-            checklist=self.current_subtask[0].knowledge_gaps,
+            checklist=checklist_text,
         )
+
+        # 防御性提取最终报告内容
+        final_block = None
+        if (
+            isinstance(summarized_content.content, list)
+            and summarized_content.content
+        ):
+            first_block = summarized_content.content[0]
+            if isinstance(first_block, dict):
+                output = first_block.get("output")
+                if isinstance(output, list) and output:
+                    final_block = output[0]
+        if final_block is None:
+            final_block = getattr(summarized_content, "content", {})
+
         return Msg(
             name=self.name,
             role="assistant",
             content=json.dumps(
-                summarized_content.content[0]["output"][0],
+                final_block,
                 indent=2,
                 ensure_ascii=False,
             ),
@@ -1254,7 +1336,11 @@ class DeepResearchAgent(ReActAgent):
         **_kwargs: Any,
     ) -> ToolResponse:
         """Generate a detailed report as a response."""
-        checklist = self.current_subtask[0].knowledge_gaps
+        checklist = (
+            self.current_subtask[0].knowledge_gaps
+            if self.current_subtask
+            else ""
+        )
         completed_subtask = self.current_subtask.pop()
 
         if len(self.current_subtask) == 0:
@@ -1264,11 +1350,26 @@ class DeepResearchAgent(ReActAgent):
             ) = await self._generate_deepresearch_report(
                 checklist=checklist,
             )
+
+            # 同样防御性提取最终报告块
+            final_block = None
+            if (
+                isinstance(summarized_content.content, list)
+                and summarized_content.content
+            ):
+                first_block = summarized_content.content[0]
+                if isinstance(first_block, dict):
+                    output = first_block.get("output")
+                    if isinstance(output, list) and output:
+                        final_block = output[0]
+            if final_block is None:
+                final_block = getattr(summarized_content, "content", {})
+
             response_msg = Msg(
                 name=self.name,
                 role="assistant",
                 content=json.dumps(
-                    summarized_content.content[0]["output"][0],
+                    final_block,
                     indent=2,
                     ensure_ascii=False,
                 ),
