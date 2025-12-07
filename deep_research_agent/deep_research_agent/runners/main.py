@@ -48,6 +48,7 @@ async def run_once(user_query: str) -> None:
             content=user_query,
             role="user",
         )
+        print("Success init")
         result = await agent(msg)
         logger.info(result)
 

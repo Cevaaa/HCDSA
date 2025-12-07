@@ -10,7 +10,7 @@ from importlib import resources
 from agentscope.tool import Toolkit, ToolResponse
 
 
-TOOL_RESULTS_MAX_WORDS = 5000
+TOOL_RESULTS_MAX_WORDS = 200
 
 
 def get_prompt_from_pkg(
@@ -26,9 +26,14 @@ def get_prompt_from_pkg(
 
 
 def truncate_by_words(sentence: str) -> str:
-    """Truncate too long sentences by words number"""
+    """Truncate too long sentences by words number and character limit"""
     if not isinstance(sentence, str) or not sentence:
         return ""
+    
+    # Hard character limit first to prevent huge tokens
+    if len(sentence) > 2000:
+        sentence = sentence[:2000] + "...(truncated)"
+
     words = re.findall(
         r"\w+|[^\w\s]",
         sentence,
