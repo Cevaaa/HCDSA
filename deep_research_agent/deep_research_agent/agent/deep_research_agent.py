@@ -26,6 +26,7 @@ from deep_research_agent.core.utils import (
     get_dynamic_tool_call_json,
     get_structure_output,
 )
+from deep_research_agent.core.cache import GLOBAL_TAVILY_CACHE, make_search_key
 
 from agentscope import logger
 from agentscope.mcp import StatefulClientBase
@@ -408,6 +409,8 @@ class DeepResearchAgent(ReActAgent):
     async def _acting(self, tool_call: ToolUseBlock) -> Msg | None:
         """
         Execute a tool call and process its response.
+
+        对 Tavily 搜索 / 抽取工具增加进程内缓存，其它工具保持原有行为。
         """
         # Add small random jitter for parallel execution to avoid rate limits
         if getattr(self, "enable_parallel", False):
@@ -428,76 +431,76 @@ class DeepResearchAgent(ReActAgent):
         update_memory = False
         intermediate_report = ""
         chunk = None  # 安全：避免 finally 中引用未定义
+        chunks_from_cache: list[Any] | None = None
+
         try:
-            # Execute the tool call
-            tool_res = await self.toolkit.call_tool_function(tool_call)
+            tool_name = tool_call["name"]
+            use_cache = tool_name in [
+                getattr(self, "search_function", ""),
+                getattr(self, "extract_function", ""),
+            ]
 
-            # Async generator handling
-            async for chunk in tool_res:
-                # Turn into a tool result block
-                tool_res_msg.content[0][  # type: ignore[index]
-                    "output"
-                ] = chunk.content
+            if use_cache:
+                cache_key = make_search_key(
+                    tool_name,
+                    tool_call.get("input", {}),
+                    None,
+                )
 
-                # Skip the printing of the finish function call
-                if (
-                    tool_call["name"] != self.finish_function_name
-                    or tool_call["name"] == self.finish_function_name
-                    and not chunk.metadata.get("success")
-                ):
-                    # For display only: truncate output to avoid flooding the console
-                    display_msg = deepcopy(tool_res_msg)
-                    raw_output = display_msg.content[0]["output"]
-                    if isinstance(raw_output, list) and len(raw_output) > 0:
-                         text = raw_output[0].get("text", "")
-                         if len(text) > 100: # if longer than ~20 words approx
-                             display_msg.content[0]["output"][0]["text"] = text[:100] + "... (truncated for display)"
-                    
-                    await self.print(display_msg, chunk.is_last)
+                async def _run_and_collect() -> list[Any]:
+                    collected: list[Any] = []
+                    tool_res_inner = await self.toolkit.call_tool_function(
+                        tool_call,
+                    )
+                    async for inner_chunk in tool_res_inner:
+                        collected.append(inner_chunk)
+                    return collected
 
-                # Return message if generate_response is called successfully
-                if tool_call[
-                    "name"
-                ] == self.finish_function_name and chunk.metadata.get(
-                    "success",
-                    True,
-                ):
-                    if len(self.current_subtask) == 0:
+                chunks_from_cache = await GLOBAL_TAVILY_CACHE.get_or_await(
+                    cache_key,
+                    _run_and_collect,
+                )
+                iterator = chunks_from_cache or []
+                is_async_iter = False
+            else:
+                tool_res = await self.toolkit.call_tool_function(tool_call)
+                iterator = tool_res
+                is_async_iter = True
+
+            if is_async_iter:
+                async for chunk in iterator:  # type: ignore[union-attr]
+                    await self._process_tool_chunk(
+                        tool_call,
+                        tool_res_msg,
+                        chunk,
+                    )
+                    if (
+                        tool_call["name"] == self.finish_function_name
+                        and chunk.metadata.get("success", True)
+                        and len(self.current_subtask) == 0
+                    ):
+                        return chunk.metadata.get("response_msg")
+            else:
+                for chunk in iterator:
+                    await self._process_tool_chunk(
+                        tool_call,
+                        tool_res_msg,
+                        chunk,
+                    )
+                    if (
+                        tool_call["name"] == self.finish_function_name
+                        and chunk.metadata.get("success", True)
+                        and len(self.current_subtask) == 0
+                    ):
                         return chunk.metadata.get("response_msg")
 
-                # Summarize intermediate results into a draft report
-                elif tool_call["name"] == self.summarize_function:
-                    self.intermediate_memory = []
-                    await self.memory.add(
-                        Msg(
-                            "assistant",
-                            [
-                                TextBlock(
-                                    type="text",
-                                    text=chunk.content[0]["text"],
-                                ),
-                            ],
-                            "assistant",
-                        ),
-                    )
+            # Update memory flags from the last chunk if needed
+            if chunk and isinstance(chunk.metadata, dict) and chunk.metadata.get(
+                "update_memory",
+            ):
+                update_memory = True
+                intermediate_report = chunk.metadata.get("intermediate_report")
 
-                # Truncate the web extract results that exceeds max length
-                elif tool_call["name"] in [
-                    self.search_function,
-                    self.extract_function,
-                ]:
-                    tool_res_msg.content[0]["output"] = truncate_search_result(
-                        tool_res_msg.content[0]["output"],
-                    )
-
-                # Update memory when an intermediate report is generated
-                if isinstance(chunk.metadata, dict) and chunk.metadata.get(
-                    "update_memory",
-                ):
-                    update_memory = True
-                    intermediate_report = chunk.metadata.get(
-                        "intermediate_report",
-                    )
             return None
 
         finally:
@@ -507,6 +510,8 @@ class DeepResearchAgent(ReActAgent):
 
             # Read more information from the web page if necessary
             if tool_call["name"] == self.search_function:
+                if chunk is None and chunks_from_cache:
+                    chunk = chunks_from_cache[-1]
                 search_results = chunk.content if chunk else []
                 extract_res = await self._follow_up(search_results, tool_call)
                 if isinstance(
@@ -544,6 +549,59 @@ class DeepResearchAgent(ReActAgent):
                         role="assistant",
                     ),
                 )
+
+    async def _process_tool_chunk(
+        self,
+        tool_call: ToolUseBlock,
+        tool_res_msg: Msg,
+        chunk: Any,
+    ) -> None:
+        """处理单个工具返回 chunk 的通用逻辑。"""
+        # Turn into a tool result block
+        tool_res_msg.content[0]["output"] = chunk.content  # type: ignore[index]
+
+        # Skip the printing of the finish function call
+        if (
+            tool_call["name"] != self.finish_function_name
+            or tool_call["name"] == self.finish_function_name
+            and not chunk.metadata.get("success")
+        ):
+            # For display only: truncate output to avoid flooding the console
+            display_msg = deepcopy(tool_res_msg)
+            raw_output = display_msg.content[0]["output"]
+            if isinstance(raw_output, list) and len(raw_output) > 0:
+                text = raw_output[0].get("text", "")
+                if len(text) > 100:
+                    display_msg.content[0]["output"][0]["text"] = (
+                        text[:100] + "... (truncated for display)"
+                    )
+
+            await self.print(display_msg, chunk.is_last)
+
+        # Summarize intermediate results into a draft report
+        if tool_call["name"] == self.summarize_function:
+            self.intermediate_memory = []
+            await self.memory.add(
+                Msg(
+                    "assistant",
+                    [
+                        TextBlock(
+                            type="text",
+                            text=chunk.content[0]["text"],
+                        ),
+                    ],
+                    "assistant",
+                ),
+            )
+
+        # Truncate the web extract results that exceeds max length
+        elif tool_call["name"] in [
+            self.search_function,
+            self.extract_function,
+        ]:
+            tool_res_msg.content[0]["output"] = truncate_search_result(
+                tool_res_msg.content[0]["output"],
+            )
 
     async def get_model_output(
         self,
@@ -615,11 +673,37 @@ class DeepResearchAgent(ReActAgent):
             ],
             "system",
         )
-        tool_res = await self.toolkit.call_tool_function(
-            tool_call,
-        )
-        async for chunk in tool_res:
-            tool_res_msg.content[0]["output"] = chunk.content
+        # 对 Tavily 搜索 / 抽取在此路径也应用缓存（例如 _follow_up 中的 extract）
+        use_cache = func_name in [
+            getattr(self, "search_function", ""),
+            getattr(self, "extract_function", ""),
+        ]
+
+        if use_cache:
+            cache_key = make_search_key(func_name, params or {}, None)
+
+            async def _run_and_collect() -> list[Any]:
+                collected: list[Any] = []
+                tool_res_inner = await self.toolkit.call_tool_function(
+                    tool_call,
+                )
+                async for inner_chunk in tool_res_inner:
+                    collected.append(inner_chunk)
+                return collected
+
+            chunks = await GLOBAL_TAVILY_CACHE.get_or_await(
+                cache_key,
+                _run_and_collect,
+            )
+            if chunks:
+                # 这里只需要最终输出内容，取最后一个 chunk 即可
+                tool_res_msg.content[0]["output"] = chunks[-1].content
+        else:
+            tool_res = await self.toolkit.call_tool_function(
+                tool_call,
+            )
+            async for chunk in tool_res:
+                tool_res_msg.content[0]["output"] = chunk.content
 
         return tool_call_msg, tool_res_msg
 
