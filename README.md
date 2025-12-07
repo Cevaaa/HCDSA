@@ -61,10 +61,12 @@ npx -y tavily-mcp@latest
 # Tavily MCP server running on stdio
 ```
 
-3) 安装该项目的环境依赖，在该项目的目录下运行。（暂时无需这一步）
+3) 安装该项目及其环境依赖。
 ```bash
-# Make sure the running path is HCDSA/
-   pip install -e .
+git clone https://github.com/Cevaaa/HCDSA.git
+cd HCDSA 
+# Make sure the running path is HCDSA/,（暂时无需这一步）
+pip install -e .
 ```
 
 ## 运行示例
