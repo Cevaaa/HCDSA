@@ -30,10 +30,9 @@ High-Concurrency Deep Search Agent
 
 GrapthRAG（Microsoft 2024.12)是当前被关注的技术，其实我们在概念图上的缓存和检索本质上也是一种GrapthRAG，后续可以尝试实现（Todo)
 
+
 ## 环境安装
-
-1) 在自己的环境目录下安装 [AgentScope](https://github.com/agentscope-ai/agentscope)，注意不是该项目目录，下面四种方式选择其一即可。
-
+1) 在自己的环境目录下安装 [AgentScope](https://github.com/agentscope-ai/agentscope)，**注意不是该项目目录**，下面四种方式选择其一即可。
 ```bash
 # Make sure the running path is path/to/your/envs/, instead of this project
 # From source
@@ -63,29 +62,36 @@ npx -y tavily-mcp@latest
 ```
 
 3) 安装该项目的环境依赖，在该项目的目录下运行。（暂时无需这一步）
-
 ```bash
 # Make sure the running path is HCDSA/
    pip install -e .
 ```
 
 ## 运行示例
+A runnable example of a Deep Research Agent using Agentscope and an MCP Tavily client.
 
-可以参考 `./deep_research_agent`的[README](./deep_research_agent/README.md)。
-
-```
-cd deep_reasrch_agent
+Quickstart:
+1) Prepare environment variables (see ./deep_research_agent/scripts/example.sh) or export via shell.
+2) Run demo:
+```bash
+# Make sure the running path is HCDSA/deep_research_agent/
 bash scripts/example.sh
 ```
 
-注意要先准备[千问](https://www.aliyun.com/product/bailian)和[tavily](https://www.tavily.com/)的API，目前是来自gjc的API，如果没有反应可能是欠费了
+Requirements:
+- Python 3.10+
+- Environment variables:
+  - DASHSCOPE_API_KEY
+  - TAVILY_API_KEY
+  - AGENT_OPERATION_DIR
 
-运行后会在指定的 `AGENT_OPERATION_DIR`目录下生成过程文件和输出报告。
+注意要先准备[千问](https://www.aliyun.com/product/bailian)和[tavily](https://www.tavily.com/)的API。
+
+运行后会在指定的`AGENT_OPERATION_DIR`目录下生成过程文件和输出报告。
 
 ## 单次调研逻辑图建立和子问题并行
 
 ```
-cd deep_reasrch_agent
 bash scripts/example.sh
 ```
 
@@ -123,7 +129,6 @@ bash scripts/example.sh
 ### 多问题缓存策略
 
 ```
-cd deep_reasrch_agent
 bash scripts/para_test.sh
 ```
 
