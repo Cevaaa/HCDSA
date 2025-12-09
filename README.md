@@ -208,5 +208,5 @@ python scripts/benchmark_rag.py --threshold 0.6
 
 1. 对于单问题多子问题并发提出更多的测试问题，方便给王哥展示
 2. 对于多问题缓存策略，debug问题出现错误的情况
-3. 可以尝试嵌入GraphRAG
+3. ~~可以尝试嵌入GraphRAG~~ [Partial down TF-IDF RAG but not the full GraphRAG, if required will use knowledge extraction and construction, which may be down further --Hanglei, 12.9]
 4. 随意发挥……orz
