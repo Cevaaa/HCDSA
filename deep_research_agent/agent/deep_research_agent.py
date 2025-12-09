@@ -27,6 +27,7 @@ from deep_research_agent.core.utils import (
     get_structure_output,
 )
 from deep_research_agent.core.cache import GLOBAL_TAVILY_CACHE, make_search_key
+from deep_research_agent.core.rag import SimpleRAGStore
 
 from agentscope import logger
 from agentscope.mcp import StatefulClientBase
@@ -76,6 +77,9 @@ class DeepResearchAgent(ReActAgent):
         tmp_file_storage_dir: str = "tmp",
         enable_parallel: bool = True,
         enable_search_cache: bool = True,
+        rag_store: Optional["SimpleRAGStore"] = None, 
+        enable_rag: bool = False, 
+
     ) -> None:
         """Initialize the Deep Research Agent."""
         self.enable_parallel = enable_parallel
@@ -207,11 +211,18 @@ class DeepResearchAgent(ReActAgent):
             tool_calls = msg_reasoning.get_content_blocks("tool_use")
             if len(tool_calls) > 0:
                 # 1. Log intention for all tool calls first
-                for tool_call in tool_calls:
-                    self.intermediate_memory.append(
+            #    for tool_call in tool_calls:
+            #        self.intermediate_memory.append(
+            #            Msg(
+            #                self.name,
+            #                content=[tool_call],
+            #                role="assistant",
+            #            ),
+            #        )
+                self.intermediate_memory.append(
                         Msg(
                             self.name,
-                            content=[tool_call],
+                            content=tool_calls,
                             role="assistant",
                         ),
                     )
@@ -221,7 +232,7 @@ class DeepResearchAgent(ReActAgent):
                     # 2a. Execute tool calls in parallel
                     logger.info(f"--- Executing {len(tool_calls)} tool calls in PARALLEL ---")
                     tasks = [self._acting(tool_call) for tool_call in tool_calls]
-                    results = await asyncio.gather(*tasks)
+                    results = await asyncio.gather(*tasks, return_exceptions=True) 
                 else:
                     # 2b. Execute tool calls serially
                     logger.info(f"--- Executing {len(tool_calls)} tool calls SERIALLY ---")
@@ -438,6 +449,26 @@ class DeepResearchAgent(ReActAgent):
 
         try:
             tool_name = tool_call["name"]
+
+
+            # Check the rag first before actual searching if 
+            if (
+                self.enable_rag 
+                and tool_call["name"] == self.search_function
+                and self.rag_store is not None
+            ):
+                query = tool_call.get("input", {}).get("query", "")
+                cached_result = self.rag_store.get_or_search(query, threshold=0.6)
+                if cached_result:
+                    logger.info(f"RAG hit for query: {query[:50]}...")
+                    # 直接返回 RAG 结果，跳过实际搜索
+                    tool_res_msg.content[0]["output"] = [
+                        {"type": "text", "text": f"[From RAG Cache]\n{cached_result}"}
+                    ]
+                    self.intermediate_memory.append(tool_res_msg)
+                    return None
+
+
             use_cache = self.enable_search_cache and tool_name in [
                 getattr(self, "search_function", ""),
                 getattr(self, "extract_function", ""),
@@ -507,6 +538,22 @@ class DeepResearchAgent(ReActAgent):
             return None
 
         finally:
+            
+            # record the rag if the query is useful
+            if (
+                self.enable_rag 
+                and tool_call["name"] == self.search_function
+                and self.rag_store is not None
+                and chunk is not None
+            ):
+                query = tool_call.get("input", {}).get("query", "")
+                result_text = str(chunk.content) if chunk else ""
+                if result_text and "error" not in result_text.lower():
+                    self.rag_store.add(
+                        content=result_text,
+                        metadata={"query": query, "source": "tavily-search"},
+                    )
+                
             # Record the tool result message in the intermediate memory
             if tool_call["name"] != self.summarize_function:
                 self.intermediate_memory.append(tool_res_msg)

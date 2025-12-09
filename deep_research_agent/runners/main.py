@@ -11,6 +11,7 @@ from agentscope.model import DashScopeChatModel
 from agentscope.message import Msg
 
 from deep_research_agent.agent.deep_research_agent import DeepResearchAgent
+from deep_research_agent.core.rag import SimpleRAGStore
 from deep_research_agent.core.mcp_client import get_tavily_client
 from deep_research_agent.config.defaults import (
     DEFAULT_MODEL_NAME,
@@ -26,7 +27,10 @@ async def run_once(user_query: str) -> None:
 
     agent_working_dir = os.getenv("AGENT_OPERATION_DIR", DEFAULT_OPERATION_DIR)
     os.makedirs(agent_working_dir, exist_ok=True)
-
+    rag_store = SimpleRAGStore(
+        persist_path=os.path.join(agent_working_dir, "rag_store.json"),
+        similarity_threshold=0.5,
+    )
     try:
         agent = DeepResearchAgent(
             name="Friday",
@@ -36,6 +40,8 @@ async def run_once(user_query: str) -> None:
                 model_name=DEFAULT_MODEL_NAME,
                 enable_thinking=False,
                 stream=True,
+                rag_store=rag_store,      # 注入 RAG
+                enable_rag=True,          # 启用 RAG
             ),
             formatter=DashScopeChatFormatter(),
             memory=InMemoryMemory(),

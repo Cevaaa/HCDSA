@@ -18,6 +18,9 @@ dependencies = [
 [project.scripts]
 deep-research-demo = "deep_research_agent.runners.main:cli_entry"
 
+[tool.setuptools.packages.find]
+include = ["deep_research_agent*"]
+
 [tool.setuptools.package-data]
 "deep_research_agent.agent.prompt.built_in_prompt" = ["*.md"]
 "deep_research_agent.logging" = ["logging.yaml"]
