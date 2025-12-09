@@ -153,7 +153,7 @@ python scripts/benchmark_rag.py
   Total time      : 31.54 s
   Tavily searches : 15
 ```
-```
+
 
 以及使用rag情况下带来的速度增益：
 ```
@@ -191,7 +191,7 @@ python scripts/benchmark_rag.py --persist-path ./test/rag_cache.json
 ```
 # 调整相似度阈值
 python scripts/benchmark_rag.py --threshold 0.6
-
+```
 
 最后会返回命中率和平均时间的统计：
 ```
