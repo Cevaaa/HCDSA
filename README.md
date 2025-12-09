@@ -136,6 +136,74 @@ bash scripts/para_test.sh
 
 现在可以实现，247个子问题命中49个，命中率20%
 
+### RAG方法降低反复查询Tavily的次数
+
+```
+bash scripts/rag_test.sh
+```
+或者也可以直接执行下面四条代码中的一个对其进行评估，例如可以执行以下代码：
+```
+python scripts/benchmark_rag.py
+```
+会返回不用rag时的搜索速度：
+```
+
+[Test 1] Running WITHOUT RAG (all queries hit Tavily)...
+
+  Total time      : 31.54 s
+  Tavily searches : 15
+```
+```
+
+以及使用rag情况下带来的速度增益：
+```
+[Test 2] Running WITH RAG (check RAG first, then Tavily)...
+  [SEARCH]   2023 GDP growth rate China...
+  [RAG HIT]  2023 GDP growth rate United States...
+  [RAG HIT]  2023 GDP growth rate Germany...
+  [SEARCH]   2023 inflation rate China...
+  [SEARCH]   2023 inflation rate United States...
+  [SEARCH]   2023 inflation rate Germany...
+  [RAG HIT]  China GDP growth 2023...
+  [RAG HIT]  US GDP growth rate 2023...
+  [SEARCH]   Germany economic growth 2023...
+  [RAG HIT]  China inflation 2023...
+  [SEARCH]   United States inflation rate 2023...
+  [SEARCH]   German inflation 2023...
+  [RAG HIT]  What is China's GDP growth in 2023...
+  [SEARCH]   2023 US economic growth rate...
+  [RAG HIT]  inflation rate in Germany 2023...
+
+  Total time      : 13.39 s
+  Tavily searches : 8
+  RAG hits        : 7
+  RAG misses      : 8
+  Hit rate        : 46.7%
+
+```
+
+假如想长期持久化保存rag搜索结果，可以使用--persist-pah参数永久保存rag_cache
+```
+# 使用持久化
+python scripts/benchmark_rag.py --persist-path ./test/rag_cache.json
+```
+假如想手动设置相似度阈值，可以调整--threshold参数进行调整
+```
+# 调整相似度阈值
+python scripts/benchmark_rag.py --threshold 0.6
+
+
+最后会返回命中率和平均时间的统计：
+```
+[Test 3] RAG Retrieval Performance...
+  Total queries        : 15
+  Hits                 : 9
+  Misses               : 6
+  Avg similarity score : 0.774
+  Avg retrieval time   : 3.088 ms
+```
+
+
 ## Todo List：
 
 1. 对于单问题多子问题并发提出更多的测试问题，方便给王哥展示
