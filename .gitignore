@@ -9,3 +9,4 @@ build/
 .deep_research_agent_logs/
 deepresearch_agent_demo_env/
 results/
+test/

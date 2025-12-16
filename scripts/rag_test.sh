@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # 阿里云百炼 API Key（以 sk- 开头）
-export DASHSCOPE_API_KEY="Your-dashscope-api-key"
+# export DASHSCOPE_API_KEY="Your-dashscope-api-key"
 
 # Tavily 搜索 API Key
-export TAVILY_API_KEY="Your-tavily-api-key"
+# export TAVILY_API_KEY="Your-tavily-api-key"
 
 python scripts/benchmark_rag.py
 

@@ -203,6 +203,11 @@ python scripts/benchmark_rag.py --threshold 0.6
   Avg retrieval time   : 3.088 ms
 ```
 
+### 高并发优化：添加APIpool解决模型和MCP服务商请求频率瓶颈问题
+目前在`multi_query_benchmark_w_APIpool.py`中添加了APIpool，解决了模型和MCP服务商请求频率瓶颈问题。可以通过`para_test_w_APIpool.sh`脚本进行测试。
+由于目前的query最多设置为10个并发查询，远远没有达到服务商的QPS上限。因此当前默认LLM APIpool和MCP服务商APIpool的大小分别2和2，仅用于功能实现。
+
+
 
 ## Todo List：
 

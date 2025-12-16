@@ -18,6 +18,7 @@ from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.message import Msg
+from agentscope.mcp import StdIOStatefulClient
 
 from deep_research_agent.agent.deep_research_agent import DeepResearchAgent
 from deep_research_agent.core.mcp_client import get_tavily_client
@@ -54,6 +55,7 @@ async def _run_single_query(
     query: str,
     tavily_client,
     agent_working_dir: str,
+    llm_api_key: str,
     timeout: int = 600,
     use_cache: bool = True,
 ) -> Dict[str, Any]:
@@ -62,7 +64,7 @@ async def _run_single_query(
         name=f"Friday-{idx}",
         sys_prompt="You are a helpful assistant named Friday.",
         model=DashScopeChatModel(
-            api_key=os.environ.get("DASHSCOPE_API_KEY"),
+            api_key=llm_api_key,
             model_name=DEFAULT_MODEL_NAME,
             enable_thinking=False,
             stream=True,
@@ -146,33 +148,84 @@ async def main():
     print(f"Total queries: {len(queries)}")
     print(f"Cache enabled: {not args.no_cache}")
 
-    tavily_search_client = await get_tavily_client()
-    agent_working_dir = os.getenv("AGENT_OPERATION_DIR", DEFAULT_OPERATION_DIR)
-    os.makedirs(agent_working_dir, exist_ok=True)
+    # Initialize API Pools
+    llm_keys = [k for k in [os.environ.get("DASHSCOPE_API_KEY"), os.environ.get("DASHSCOPE_API_KEY_2")] if k]
+    tavily_keys = [k for k in [os.environ.get("TAVILY_API_KEY"), os.environ.get("TAVILY_API_KEY_2")] if k]
+    tavily_clients = []
+
+    async def _create_tavily_client(key):
+        client = StdIOStatefulClient(
+            name="tavily_mcp",
+            command="npx",
+            args=["-y", "tavily-mcp@latest"],
+            env={"TAVILY_API_KEY": key},
+        )
+        await client.connect()
+        return client
 
     try:
-        start_batch = time.time()
+        for k in tavily_keys:
+            tavily_clients.append(await _create_tavily_client(k))
 
-        tasks = []
-        for idx, q in enumerate(queries, start=1):
-            tasks.append(
-                _run_single_query(
-                    idx=idx,
-                    query=q,
-                    tavily_client=tavily_search_client,
-                    agent_working_dir=agent_working_dir,
-                    use_cache=not args.no_cache,
-                ),
-            )
+        agent_working_dir = os.getenv("AGENT_OPERATION_DIR", DEFAULT_OPERATION_DIR)
+        os.makedirs(agent_working_dir, exist_ok=True)
+
+        start_batch = time.time()
 
         if args.max_concurrency and args.max_concurrency > 0:
             # 简单的并发控制：分批次 gather
             results: List[Dict[str, Any]] = []
-            for i in range(0, len(tasks), args.max_concurrency):
-                batch = tasks[i : i + args.max_concurrency]
-                batch_res = await asyncio.gather(*batch, return_exceptions=False)
+            for i in range(0, len(queries), args.max_concurrency):
+                batch_queries = queries[i : i + args.max_concurrency]
+                batch_tasks = []
+                
+                # 根据当前批次的实际协程数分配 API 资源
+                for j, query in enumerate(batch_queries):
+                    task_idx = i + j + 1  # 获取原始任务索引
+                    
+                    if len(batch_queries) > 1:
+                        # 使用基于当前批次的分配
+                        llm_key = llm_keys[j % len(llm_keys)]
+                        tavily_client = tavily_clients[j % len(tavily_clients)]
+                    else:
+                        # 使用第一个 API
+                        llm_key = llm_keys[0]
+                        tavily_client = tavily_clients[0]
+                    
+                    batch_tasks.append(
+                        _run_single_query(
+                            idx=task_idx,
+                            query=query,
+                            tavily_client=tavily_client,
+                            agent_working_dir=agent_working_dir,
+                            llm_api_key=llm_key,
+                            use_cache=not args.no_cache,
+                        )
+                    )
+                
+                batch_res = await asyncio.gather(*batch_tasks, return_exceptions=False)
                 results.extend(batch_res)
         else:
+            # 无并发限制，直接分配并运行所有任务
+            tasks = []
+            for idx, q in enumerate(queries, start=1):
+                if use_pool:
+                    llm_key = llm_keys[(idx - 1) % len(llm_keys)]
+                    tavily_client = tavily_clients[(idx - 1) % len(tavily_clients)]
+                else:
+                    llm_key = llm_keys[0]
+                    tavily_client = tavily_clients[0]
+
+                tasks.append(
+                    _run_single_query(
+                        idx=idx,
+                        query=q,
+                        tavily_client=tavily_client,
+                        agent_working_dir=agent_working_dir,
+                        llm_api_key=llm_key,
+                        use_cache=not args.no_cache,
+                    ),
+                )
             results = await asyncio.gather(*tasks, return_exceptions=False)
 
         end_batch = time.time()
@@ -206,12 +259,14 @@ async def main():
         print("=" * 30)
 
     finally:
-        await tavily_search_client.close()
+        # 安全关闭所有 Tavily 客户端
+        for client in tavily_clients:
+            try:
+                await asyncio.wait_for(client.close(), timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                # 忽略关闭时的超时、取消或其他异常，避免程序崩溃
+                pass
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
-
