@@ -1,12 +1,16 @@
 # HCDSA
 
-High-Concurrency Deep Search Agent
+本项目实现了一个高并发的深度搜索智能体（High-Concurrency Deep Search Agent），能够支持高并发请求下的并行搜索，实现高效推理。项目为清华大学深圳国际研究生院《大数据系统基础（B）》课程大项目。
 
-## 项目说明
+项目框架如下所示：
+![alt text](./pipeline_HCDDA.png)
 
-大模型搜索和检索增强（RAG)是一项非常重要的工具，能够帮助大模型不需要训练和微调就能实现规范化可信的输出。
 
-经过调研，当前的 大语言模型搜索基本都是采用串行策略（如GPT、Gemini等)，因为串行策略，大模型能够基于上一个回答动态地修改下一次的搜索prompt细节。然而，很多搜索是可以并行的，尤其是小领域微调模型，比如：
+本项目实现了一个基于 **AgentScope** 框架的**高并发深度搜索智能体（HCDSA）**，旨在解决传统大模型串行搜索效率低下的痛点。系统能够将复杂的调研问题自动拆解为可并行的子任务 DAG 图，利用多线程并发执行网络搜索；同时结合 **RAG（检索增强生成）** 技术与本地缓存策略，有效减少重复的外部 API 调用并降低成本。此外，项目集成了 API 连接池机制以突破服务商频率限制，最终能够自动合成逻辑严密、数据详实的深度研究报告。
+
+## 1 项目背景
+
+大模型搜索和检索增强（RAG）是一项非常重要的工具，能够帮助大模型不需要训练和微调就能实现规范化可信的输出。当前的大语言模型搜索基本都是采用串行策略（如GPT、Gemini等），因为串行策略，大模型能够基于上一个回答动态地修改下一次的搜索prompt细节。然而，很多搜索是可以并行的，尤其是小领域微调模型，比如：
 
 ```
 调研2022、2023、2024，中、美、英、法国的经济增长趋势和通货膨胀率的关系
@@ -16,9 +20,9 @@ High-Concurrency Deep Search Agent
 …… 
 ```
 
-这里，至少能拆分出3乘4乘2=24个可以并行的子任务。我们可以先绘制概念DAG图，对于同层的问题展开并行。（目前已经完成)
+这里，至少能拆分出$3\times4\times2=24$个可以并行的子任务。因此，我们可以先绘制概念DAG图，对于同层的问题展开并行。
 
-同时，在小领域专用大语言模型，用户经常会提问相似的问题，比如：
+此外，在小领域专用大语言模型，用户经常会提问相似的问题，比如：
 
 ```
 用户A：调研2022、2023、2024，中、美、英、法国的经济增长趋势和通货膨胀率的关系
@@ -26,12 +30,10 @@ High-Concurrency Deep Search Agent
 用户C：2024年，查询通货膨胀率是如何影响到经济增长率的
 ```
 
-这些deep resarch问题，模型都需要先填写一样的知识空白，在互联网中查询末年末国具体的数据，因此多查询请求是可以使用缓存策略并行的（完成部分，但是出现有些查询失败导致实验使用缓存没有明显的差距)。
-
-GrapthRAG（Microsoft 2024.12)是当前被关注的技术，其实我们在概念图上的缓存和检索本质上也是一种GrapthRAG，后续可以尝试实现（Todo)
+这些需要深度搜索的问题，模型都需要先填写一样的知识空白，在互联网中查询末年末国具体的数据，因此多查询请求是可以使用缓存策略并行的
 
 
-## 环境安装
+## 2 环境安装
 1) 在自己的环境目录下安装 [AgentScope](https://github.com/agentscope-ai/agentscope)，**注意不是该项目目录**，下面四种方式选择其一即可。
 ```bash
 # Make sure the running path is path/to/your/envs/, instead of this project
@@ -57,8 +59,7 @@ uv pip install agentscope
 ```bash
 apt-get install npm
 # 确保以下指令能够正常运行
-npx -y tavily-mcp@latest
-# Tavily MCP server running on stdio
+npx -y tavily-mcp@latest   # Tavily MCP server running on stdio
 ```
 
 3) 安装该项目及其环境依赖。
@@ -73,10 +74,10 @@ pip install -e .
 A runnable example of a Deep Research Agent using Agentscope and an MCP Tavily client.
 
 Quickstart:
-1) Prepare environment variables (see ./deep_research_agent/scripts/example.sh) or export via shell.
+1) Prepare environment variables (see [scripts](./scripts/example.sh)) or export via shell.
 2) Run demo:
 ```bash
-# Make sure the running path is HCDSA/deep_research_agent/
+# Make sure the running path is HCDSA/
 bash scripts/example.sh
 ```
 
@@ -91,11 +92,14 @@ Requirements:
 
 运行后会在指定的`AGENT_OPERATION_DIR`目录下生成过程文件和输出报告。
 
-## 单次调研逻辑图建立和子问题并行
+## 3 功能介绍
 
+### 3.1 单次调研逻辑图建立和子问题并行
++ **运行脚本**
 ```
 bash scripts/example.sh
 ```
++ **运行结果**
 
 会输出子问题DAG：
 
@@ -128,15 +132,19 @@ bash scripts/example.sh
 [Semantic Execution] Layer 1 serial estimate: 11.09 s (speedup ~ 4.45x)
 ```
 
-### 多问题缓存策略
+### 3.2 多问题缓存策略
 
++ **运行脚本**
 ```
 bash scripts/para_test.sh
 ```
++ **运行结果**
 
 现在可以实现，247个子问题命中49个，命中率20%
 
-### RAG方法降低反复查询Tavily的次数
+### 3.3 RAG方法降低反复查询Tavily的次数
+
++ **运行脚本**
 
 ```
 bash scripts/rag_test.sh
@@ -145,6 +153,9 @@ bash scripts/rag_test.sh
 ```
 python scripts/benchmark_rag.py
 ```
+
++ **运行结果**
+
 会返回不用rag时的搜索速度：
 ```
 
@@ -203,15 +214,18 @@ python scripts/benchmark_rag.py --threshold 0.6
   Avg retrieval time   : 3.088 ms
 ```
 
-### 高并发优化：添加APIpool解决模型和MCP服务商请求频率瓶颈问题
+### 3.4 高并发优化：添加APIpool解决模型和MCP服务商请求频率瓶颈问题
 目前在`multi_query_benchmark_w_APIpool.py`中添加了APIpool，解决了模型和MCP服务商请求频率瓶颈问题。可以通过`para_test_w_APIpool.sh`脚本进行测试。
 由于目前的query最多设置为10个并发查询，远远没有达到服务商的QPS上限。因此当前默认LLM APIpool和MCP服务商APIpool的大小分别2和2，仅用于功能实现。
 
+## Acknowledge
 
++ 感谢小组成员的付出。
++ 特别感谢老师和助教的帮助和指导。
++ 感谢所有为本项目做出贡献的开发者们：
 
-## Todo List：
-
-1. 对于单问题多子问题并发提出更多的测试问题，方便给王哥展示
-2. 对于多问题缓存策略，debug问题出现错误的情况
-3. ~~可以尝试嵌入GraphRAG~~ [Partial down TF-IDF RAG but not the full GraphRAG, if required will use knowledge extraction and construction, which may be down further --Hanglei, 12.9]
-4. 随意发挥……orz
+<div align=center style="margin-top: 30px;">
+  <a href="https://github.com/Cevaaa/HCDSA/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=Cevaaa/HCDSA" />
+  </a>
+</div>
