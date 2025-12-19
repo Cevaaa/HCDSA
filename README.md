@@ -70,7 +70,7 @@ cd HCDSA
 pip install -e .
 ```
 
-## 运行示例
+## 3 运行示例
 A runnable example of a Deep Research Agent using Agentscope and an MCP Tavily client.
 
 Quickstart:
@@ -92,9 +92,9 @@ Requirements:
 
 运行后会在指定的`AGENT_OPERATION_DIR`目录下生成过程文件和输出报告。
 
-## 3 功能介绍
+## 4 功能介绍
 
-### 3.1 单次调研逻辑图建立和子问题并行
+### 4.1 单次调研逻辑图建立和子问题并行
 + **运行脚本**
 ```
 bash scripts/example.sh
@@ -132,7 +132,7 @@ bash scripts/example.sh
 [Semantic Execution] Layer 1 serial estimate: 11.09 s (speedup ~ 4.45x)
 ```
 
-### 3.2 多问题缓存策略
+### 4.2 多问题缓存策略
 
 + **运行脚本**
 ```
@@ -142,7 +142,7 @@ bash scripts/para_test.sh
 
 现在可以实现，247个子问题命中49个，命中率20%
 
-### 3.3 RAG方法降低反复查询Tavily的次数
+### 4.3 RAG方法降低反复查询Tavily的次数
 
 + **运行脚本**
 
@@ -214,7 +214,7 @@ python scripts/benchmark_rag.py --threshold 0.6
   Avg retrieval time   : 3.088 ms
 ```
 
-### 3.4 高并发优化：添加APIpool解决模型和MCP服务商请求频率瓶颈问题
+### 4.4 高并发优化：添加APIpool解决模型和MCP服务商请求频率瓶颈问题
 目前在`multi_query_benchmark_w_APIpool.py`中添加了APIpool，解决了模型和MCP服务商请求频率瓶颈问题。可以通过`para_test_w_APIpool.sh`脚本进行测试。
 由于目前的query最多设置为10个并发查询，远远没有达到服务商的QPS上限。因此当前默认LLM APIpool和MCP服务商APIpool的大小分别2和2，仅用于功能实现。
 
